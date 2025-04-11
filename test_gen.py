@@ -44,20 +44,69 @@ from transformers import LlamaForCausalLM, PreTrainedTokenizerFast
 # image = load_image("F:/ImageSet/ObjectRemoval/test.jpg")
 # mask = load_image("F:/ImageSet/ObjectRemoval/test_mask.png")
 
+# Parse resolution string to get height and width
+def parse_resolution(resolution_str):
+    if "1024 × 1024" in resolution_str:
+        return 1024, 1024
+    elif "768 × 1360" in resolution_str:
+        return 768, 1360
+    elif "1360 × 768" in resolution_str:
+        return 1360, 768
+    elif "880 × 1168" in resolution_str:
+        return 880, 1168
+    elif "1168 × 880" in resolution_str:
+        return 1168, 880
+    elif "1248 × 832" in resolution_str:
+        return 1248, 832
+    elif "832 × 1248" in resolution_str:
+        return 832, 1248
+    else:
+        return 1024, 1024  # Default fallback
+
 @torch.no_grad()
 def main():
 
     device = torch.device("cuda")
     dtype = torch.bfloat16
 
+    # Parse resolution
+    # if "1024 × 1024" in resolution_str:
+    #     return 1024, 1024
+    # elif "768 × 1360" in resolution_str:
+    #     return 768, 1360
+    # elif "1360 × 768" in resolution_str:
+    #     return 1360, 768
+    # elif "880 × 1168" in resolution_str:
+    #     return 880, 1168
+    # elif "1168 × 880" in resolution_str:
+    #     return 1168, 880
+    # elif "1248 × 832" in resolution_str:
+    #     return 1248, 832
+    # elif "832 × 1248" in resolution_str:
+    #     return 832, 1248
+    # else:
+    #     return 1024, 1024  # Default fallback
+    height, width = 832, 1248
     # prompt = "Remove the selected objects from the image."
-    hidream_dir = "F:/HiDream-I1/hidream_models/full"
-    # hidream_dir = "F:/HiDream-I1/hidream_models/fast"
+    # hidream_dir = "F:/HiDream-I1/hidream_models/full"
+    hidream_dir = "F:/HiDream-I1/hidream_models/fast"
+    seed = 42
+    # Handle seed
+    if seed == -1:
+        seed = torch.randint(0, 1000000, (1,)).item()
+    # num_inference_steps = 50
+    # guidance_scale = 5.0
+    num_inference_steps = 16
+    guidance_scale = 0
+    save_image_name = "test_fast"
+    
+    
     llama31_dir = "F:/HiDream-I1/hidream_models/llama31"
 
     embedding_path = "0_embedding.pt"
-    prompt = "a beautiful girl in starry dress in anime style"
-    neg_prompt = "photo realistic"
+    # prompt = "A stunning 4K watercolor painting of a European beauty, Beke Jacoba, a sacred yet unholy fallen angel with huge black feather wings, freckled skin, and beautiful glowing red eyes, portrayed as a piece of art by Olivier Ledroit & Calm. She has long black ponytail hair, a black & gold shoulder armor with a glowing red jewel on her pauldrons, a black choker with an upside-down cross, and a multiple-chain belt around her hips while holding a black rosary around her arm. With an hourglass figure, huge veiny breasts, long legs, large hips, trimmed pubic hair, and scars on her body, she strikes a sensual erotic pose—leg raised, swollen labia visible in a 3/4 side view from below, standing with one foot just over the viewer in a dark Gothic cathedral illuminated by blue and purple stained glass. The image, in an absurdly high resolution, captures sharp focus on her body and crotch, emphasizing her dominance in a Femdom POV as she gazes at the viewer with perfect, detailed features—full lips, long eyelashes, and eyeliner enhancing her gothic, black-and-red aesthetic."
+    prompt = "Create a surreal, ethereal scene set in a hidden celestial library nestled within the heart of an ancient, overgrown forest. The library is an open-air structure with towering, crumbling marble columns draped in ivy and glowing bioluminescent vines. Shelves of floating books spiral upward into a twilight sky streaked with auroras. At the center, a massive, gilded astrolabe rotates slowly, casting prismatic light onto a pool of liquid stardust below. Surrounding the pool, mythical creatures gather: a phoenix with feathers made of molten amber perches on a fractured clocktower, a fox with a coat resembling shifting constellations sniffs at an open book whose pages flutter into origami birds, and a translucent, jellyfish-like entity floats nearby, its tentacles made of inky calligraphy. Through the library’s arched windows, glimpses of a distant galaxy swirl, while tiny robot sprites with butterfly wings repair cracks in the walls using starlight. The scene is illuminated by a mix of moonlight filtering through stained-glass domes and the soft glow of hovering lanterns shaped like dandelion seeds."
+    neg_prompt = "bad anatomy, watermark, logo, anime, comic, drawing, bench, chair, stool, table,"
 
     # scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
     scheduler = FlashFlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
@@ -219,19 +268,8 @@ def main():
         del pipeline
         flush()
 
-
-    # Parse resolution
-    height, width = 1024, 1024
-    seed = 42
-    # Handle seed
-    if seed == -1:
-        seed = torch.randint(0, 1000000, (1,)).item()
     
     generator = torch.Generator("cuda").manual_seed(seed)
-    num_inference_steps = 50
-    guidance_scale = 5.0
-    save_image_name = "test_full"
-    # num_inference_steps = 16
 
     transformer = HiDreamImageTransformer2DModel.from_pretrained(
         hidream_dir, 
@@ -279,60 +317,6 @@ def main():
     ).images[0]
     image.save(f"{save_image_name}.png")
 
-    # print('loading flux transformer……')
-    # transformer = FluxTransformer2DModel.from_pretrained(
-    #     flux_dir, 
-    #     subfolder="transformer", # 下载的fp8模型地址
-    #     torch_dtype=dtype,
-    #     local_files_only=True
-    # )
-    # pipeline.transformer = transformer
-
-    # # print("Loading lora")
-    # # pipeline.load_lora_weights("F:/models/Lora/flux", weight_name="objectRemoval_rordtest_reg08-0-16314.safetensors", adapter_name="removal")
-    # # pipeline.set_adapters(["removal"], adapter_weights=[1])
-    # # print("Fusing lora")
-    # # pipeline.fuse_lora()
-
-    # print('loaded flux transformer')
-    # print('optimized flux transformer')
-    # quantize(transformer, weights=qfloat8) # 对模型进行量化
-    # freeze(transformer)
-
-
-    # pipeline.enable_model_cpu_offload()
-    # # pipeline.transformer.enable_layer_wise_casting()
-    # dtype = torch.bfloat16
-
-    # image = pipeline(
-    #     num_inference_steps=30,
-    #     prompt_embeds=prompt_embeds,
-    #     pooled_prompt_embeds=pooled_prompt_embeds,
-    #     image=image,
-    #     # mask_image=mask,
-    #     height=512,
-    #     width=512,
-    #     max_sequence_length=512,
-    #     generator=torch.Generator("cpu").manual_seed(0)
-    # ).images[0]
-    # image.save(f"output_removal.png")
-
-    # # pipeline.load_lora_weights("F:/models/Lora/flux", weight_name="objectRemoval_rordtest_reg08-0-16314.safetensors", adapter_name="removal")
-    # # pipeline.set_adapters("removal")
-
-    # # image = pipeline(
-    # #     num_inference_steps=30,
-    # #     prompt_embeds=prompt_embeds,
-    # #     pooled_prompt_embeds=pooled_prompt_embeds,
-    # #     image=image,
-    # #     mask_image=mask,
-    # #     height=512,
-    # #     width=512,
-    # #     max_sequence_length=512,
-    # #     cross_attention_kwargs={"scale": 1},
-    # #     generator=torch.Generator("cpu").manual_seed(0)
-    # # ).images[0]
-    # # image.save(f"output_lora.png")
 
 if __name__ == "__main__":
     main()

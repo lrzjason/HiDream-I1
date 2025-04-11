@@ -1,0 +1,56 @@
+main:
+  vscode:
+    - docker:
+        image: docker.cnb.cool/REDAIGC/HiDream-I1:v0.0.1
+      runner:
+        cpus: 64
+        tags: cnb:arch:amd64:gpu
+      services:
+        - vscode
+        - docker
+      stages:
+        - name: git lfs
+          script: git lfs install
+        - name : 拷贝user文件
+          script: |
+            cp -af /workspace/user/. /HiDream-I1/user/
+        - name : 拷贝hidream_models文件
+          script: |
+            cp -af /workspace/hidream_models/. /HiDream-I1/hidream_models/
+
+      endStages:
+        - name: 保存user
+          script: |
+            # 拷贝user目录
+            cp -af /HiDream-I1/user/. /workspace/user/
+            # 检测 user 目录是否有变化
+            if [ -n "$(git status --porcelain user/)" ]; then
+              git add user/
+              echo -e "\033[34muser有更新，已暂存。\033[0m"
+            else
+              echo -e "\033[36muser未发生变化\033[0m"
+            fi
+
+        - name: 提交变更（如果有）
+          script: |
+            if [ -n "$(git diff --cached --quiet || echo "有变更")" ]; then
+              git commit -m "update file at ${CNB_BUILD_START_TIME}"
+              git push
+              echo -e "\033[32m资料变更已提交并推送\033[0m"
+            else
+              echo -e "\033[36m无变更可提交，跳过\033[0m"
+            fi
+
+$:
+  vscode:
+    - docker:
+        image: docker.cnb.cool/REDAIGC/HiDream-I1:v0.0.1
+      runner:
+        cpus: 64
+        tags: cnb:arch:amd64:gpu
+      services:
+        - vscode
+        - docker
+      stages:
+        - name: git lfs
+          script: git lfs install

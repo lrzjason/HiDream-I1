@@ -1,0 +1,5 @@
+workspace:
+  launch:
+    button:
+      name: HiDream-I1
+      description: 启动HiDream-I1！
