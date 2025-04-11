@@ -16,6 +16,8 @@ from ..attention import HiDreamAttention, FeedForwardSwiGLU
 from ..attention_processor import HiDreamAttnProcessor_flashattn
 from ..moe import MOEFeedForwardSwiGLU
 
+import hi_diffusers.models.transformers.custom_offloading_utils as custom_offloading_utils
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 class TextProjection(nn.Module):
@@ -303,7 +305,54 @@ class HiDreamImageTransformer2DModel(
         self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
+        
+        
+        self.cpu_offload_checkpointing = False
+        self.blocks_to_swap = None
 
+        self.offloader_double = None
+        self.offloader_single = None
+        self.num_double_blocks = len(self.double_stream_blocks)
+        self.num_single_blocks = len(self.single_stream_blocks)
+    def enable_block_swap(self, num_blocks: int, device: torch.device):
+        self.blocks_to_swap = num_blocks
+        double_blocks_to_swap = num_blocks // 2
+        single_blocks_to_swap = (num_blocks - double_blocks_to_swap) * 2
+
+        assert double_blocks_to_swap <= self.num_double_blocks - 2 and single_blocks_to_swap <= self.num_single_blocks - 2, (
+            f"Cannot swap more than {self.num_double_blocks - 2} double blocks and {self.num_single_blocks - 2} single blocks. "
+            f"Requested {double_blocks_to_swap} double blocks and {single_blocks_to_swap} single blocks."
+        )
+
+        self.offloader_double = custom_offloading_utils.ModelOffloader(
+            self.double_stream_blocks, self.num_double_blocks, double_blocks_to_swap, device  # , debug=True
+        )
+        self.offloader_single = custom_offloading_utils.ModelOffloader(
+            self.single_stream_blocks, self.num_single_blocks, single_blocks_to_swap, device  # , debug=True
+        )
+        print(
+            f"HiDream: Block swap enabled. Swapping {num_blocks} blocks, double blocks: {double_blocks_to_swap}, single blocks: {single_blocks_to_swap}."
+        )
+
+    def move_to_device_except_swap_blocks(self, device: torch.device):
+        # assume model is on cpu. do not move blocks to device to reduce temporary memory usage
+        if self.blocks_to_swap:
+            save_double_stream_blocks = self.double_stream_blocks
+            save_single_stream_blocks = self.single_stream_blocks
+            self.double_stream_blocks = None
+            self.single_stream_blocks = None
+
+        self.to(device)
+
+        if self.blocks_to_swap:
+            self.double_stream_blocks = save_double_stream_blocks
+            self.single_stream_blocks = save_single_stream_blocks
+
+    def prepare_block_swap_before_forward(self):
+        if self.blocks_to_swap is None or self.blocks_to_swap == 0:
+            return
+        self.offloader_double.prepare_block_devices_before_forward(self.double_stream_blocks)
+        self.offloader_single.prepare_block_devices_before_forward(self.single_stream_blocks)
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
@@ -372,6 +421,10 @@ class HiDreamImageTransformer2DModel(
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ):
+        
+        self.move_to_device_except_swap_blocks(hidden_states.device)  # reduce peak memory usage
+        self.prepare_block_swap_before_forward()
+        
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
             lora_scale = joint_attention_kwargs.pop("scale", 1.0)
@@ -435,8 +488,13 @@ class HiDreamImageTransformer2DModel(
         initial_encoder_hidden_states = torch.cat([encoder_hidden_states[-1], encoder_hidden_states[-2]], dim=1)
         initial_encoder_hidden_states_seq_len = initial_encoder_hidden_states.shape[1]
         for bid, block in enumerate(self.double_stream_blocks):
+            # patch blocks swap
+            if self.blocks_to_swap:
+                self.offloader_double.wait_for_block(bid)
+                
             cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
             cur_encoder_hidden_states = torch.cat([initial_encoder_hidden_states, cur_llama31_encoder_hidden_states], dim=1)
+            
             if self.training and self.gradient_checkpointing:
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -466,6 +524,11 @@ class HiDreamImageTransformer2DModel(
                 )
             initial_encoder_hidden_states = initial_encoder_hidden_states[:, :initial_encoder_hidden_states_seq_len]
             block_id += 1
+            
+            # patch blocks swap
+            if self.blocks_to_swap:
+                self.offloader_double.submit_move_blocks(self.double_stream_blocks, bid)
+
 
         image_tokens_seq_len = hidden_states.shape[1]
         hidden_states = torch.cat([hidden_states, initial_encoder_hidden_states], dim=1)
@@ -478,6 +541,9 @@ class HiDreamImageTransformer2DModel(
             image_tokens_masks = torch.cat([image_tokens_masks, encoder_attention_mask_ones], dim=1)
 
         for bid, block in enumerate(self.single_stream_blocks):
+            if self.blocks_to_swap:
+                self.offloader_single.wait_for_block(bid)
+                
             cur_llama31_encoder_hidden_states = encoder_hidden_states[block_id]
             hidden_states = torch.cat([hidden_states, cur_llama31_encoder_hidden_states], dim=1)
             if self.training and self.gradient_checkpointing:
@@ -509,6 +575,11 @@ class HiDreamImageTransformer2DModel(
                 )
             hidden_states = hidden_states[:, :hidden_states_seq_len]
             block_id += 1
+            
+            
+            if self.blocks_to_swap:
+                self.offloader_single.submit_move_blocks(self.single_stream_blocks, bid)
+
         
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]
         output = self.final_layer(hidden_states, adaln_input)

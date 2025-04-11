@@ -232,6 +232,14 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
         prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, -1)
+        
+        # prompt_embeds = prompt_embeds.pooler_output
+        # prompt_embeds = prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
+
+        # # duplicate text embeddings for each generation per prompt, using mps friendly method
+        # prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt)
+        # prompt_embeds = prompt_embeds.view(batch_size * num_images_per_prompt, -1)
+
 
         return prompt_embeds
     
@@ -309,7 +317,8 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         if prompt is not None:
             batch_size = len(prompt)
         else:
-            batch_size = prompt_embeds.shape[0]
+            batch_size = 1
+            # batch_size = prompt_embeds.shape[0]
 
         prompt_embeds, pooled_prompt_embeds = self._encode_prompt(
             prompt = prompt,
@@ -537,6 +546,7 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 128,
+        device=None
     ):
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
@@ -557,37 +567,40 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         elif prompt is not None and isinstance(prompt, list):
             batch_size = len(prompt)
         else:
-            batch_size = prompt_embeds.shape[0]
-
-        device = self._execution_device
+            batch_size = 1
+            # batch_size = prompt_embeds.shape[0]
+        if device is None:
+            device = self._execution_device
 
         lora_scale = (
             self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         )
-        (
-            prompt_embeds,
-            negative_prompt_embeds,
-            pooled_prompt_embeds,
-            negative_pooled_prompt_embeds,
-        ) = self.encode_prompt(
-            prompt=prompt,
-            prompt_2=prompt_2,
-            prompt_3=prompt_3,
-            prompt_4=prompt_4,
-            negative_prompt=negative_prompt,
-            negative_prompt_2=negative_prompt_2,
-            negative_prompt_3=negative_prompt_3,
-            negative_prompt_4=negative_prompt_4,
-            do_classifier_free_guidance=self.do_classifier_free_guidance,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            device=device,
-            num_images_per_prompt=num_images_per_prompt,
-            max_sequence_length=max_sequence_length,
-            lora_scale=lora_scale,
-        )
+        
+        if prompt_embeds is None or negative_prompt_embeds is None or pooled_prompt_embeds is None or negative_pooled_prompt_embeds is None:
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            ) = self.encode_prompt(
+                prompt=prompt,
+                prompt_2=prompt_2,
+                prompt_3=prompt_3,
+                prompt_4=prompt_4,
+                negative_prompt=negative_prompt,
+                negative_prompt_2=negative_prompt_2,
+                negative_prompt_3=negative_prompt_3,
+                negative_prompt_4=negative_prompt_4,
+                do_classifier_free_guidance=self.do_classifier_free_guidance,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+                lora_scale=lora_scale,
+            )
 
         if self.do_classifier_free_guidance:
             prompt_embeds_arr = []
@@ -654,7 +667,8 @@ class HiDreamImagePipeline(DiffusionPipeline, FromSingleFileMixin):
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
-
+                
+                
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
