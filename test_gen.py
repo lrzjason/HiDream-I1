@@ -44,25 +44,6 @@ from transformers import LlamaForCausalLM, PreTrainedTokenizerFast
 # image = load_image("F:/ImageSet/ObjectRemoval/test.jpg")
 # mask = load_image("F:/ImageSet/ObjectRemoval/test_mask.png")
 
-# Parse resolution string to get height and width
-def parse_resolution(resolution_str):
-    if "1024 × 1024" in resolution_str:
-        return 1024, 1024
-    elif "768 × 1360" in resolution_str:
-        return 768, 1360
-    elif "1360 × 768" in resolution_str:
-        return 1360, 768
-    elif "880 × 1168" in resolution_str:
-        return 880, 1168
-    elif "1168 × 880" in resolution_str:
-        return 1168, 880
-    elif "1248 × 832" in resolution_str:
-        return 1248, 832
-    elif "832 × 1248" in resolution_str:
-        return 832, 1248
-    else:
-        return 1024, 1024  # Default fallback
-
 @torch.no_grad()
 def main():
 
@@ -89,7 +70,7 @@ def main():
     height, width = 832, 1248
     # prompt = "Remove the selected objects from the image."
     # hidream_dir = "F:/HiDream-I1/hidream_models/full"
-    hidream_dir = "F:/HiDream-I1/hidream_models/fast"
+    hidream_dir = "F:/HiDream-I1/hidream_models/fast_nf4"
     seed = 42
     # Handle seed
     if seed == -1:
@@ -98,17 +79,27 @@ def main():
     # guidance_scale = 5.0
     num_inference_steps = 16
     guidance_scale = 0
-    save_image_name = "test_fast"
+    save_image_name = "test"
+    block_swap = 0
     
     
     llama31_dir = "F:/HiDream-I1/hidream_models/llama31"
 
     embedding_path = "0_embedding.pt"
     # prompt = "A stunning 4K watercolor painting of a European beauty, Beke Jacoba, a sacred yet unholy fallen angel with huge black feather wings, freckled skin, and beautiful glowing red eyes, portrayed as a piece of art by Olivier Ledroit & Calm. She has long black ponytail hair, a black & gold shoulder armor with a glowing red jewel on her pauldrons, a black choker with an upside-down cross, and a multiple-chain belt around her hips while holding a black rosary around her arm. With an hourglass figure, huge veiny breasts, long legs, large hips, trimmed pubic hair, and scars on her body, she strikes a sensual erotic pose—leg raised, swollen labia visible in a 3/4 side view from below, standing with one foot just over the viewer in a dark Gothic cathedral illuminated by blue and purple stained glass. The image, in an absurdly high resolution, captures sharp focus on her body and crotch, emphasizing her dominance in a Femdom POV as she gazes at the viewer with perfect, detailed features—full lips, long eyelashes, and eyeliner enhancing her gothic, black-and-red aesthetic."
-    prompt = "Create a surreal, ethereal scene set in a hidden celestial library nestled within the heart of an ancient, overgrown forest. The library is an open-air structure with towering, crumbling marble columns draped in ivy and glowing bioluminescent vines. Shelves of floating books spiral upward into a twilight sky streaked with auroras. At the center, a massive, gilded astrolabe rotates slowly, casting prismatic light onto a pool of liquid stardust below. Surrounding the pool, mythical creatures gather: a phoenix with feathers made of molten amber perches on a fractured clocktower, a fox with a coat resembling shifting constellations sniffs at an open book whose pages flutter into origami birds, and a translucent, jellyfish-like entity floats nearby, its tentacles made of inky calligraphy. Through the library’s arched windows, glimpses of a distant galaxy swirl, while tiny robot sprites with butterfly wings repair cracks in the walls using starlight. The scene is illuminated by a mix of moonlight filtering through stained-glass domes and the soft glow of hovering lanterns shaped like dandelion seeds."
+    # prompt = "Create a surreal, ethereal scene set in a hidden celestial library nestled within the heart of an ancient, overgrown forest. The library is an open-air structure with towering, crumbling marble columns draped in ivy and glowing bioluminescent vines. Shelves of floating books spiral upward into a twilight sky streaked with auroras. At the center, a massive, gilded astrolabe rotates slowly, casting prismatic light onto a pool of liquid stardust below. Surrounding the pool, mythical creatures gather: a phoenix with feathers made of molten amber perches on a fractured clocktower, a fox with a coat resembling shifting constellations sniffs at an open book whose pages flutter into origami birds, and a translucent, jellyfish-like entity floats nearby, its tentacles made of inky calligraphy. Through the library’s arched windows, glimpses of a distant galaxy swirl, while tiny robot sprites with butterfly wings repair cracks in the walls using starlight. The scene is illuminated by a mix of moonlight filtering through stained-glass domes and the soft glow of hovering lanterns shaped like dandelion seeds."
+    # prompt = "A naked young woman stands on the beach, with her breasts and areola clearly visible."
+    prompt = "A breathtaking and romantic beach sunset sets the scene. A young woman, gracefully seated on the beach, is fully absorbed in watching the gentle waves roll. The sea breeze playfully tousles her long hair. Shot from the side, her face's clear curve is accentuated. The warm sunlight creates a stunning golden rim around her silhouette, thanks to the backlight. She is dressed in a flowing white dress, making her a captivating figure against the backdrop of the sunset."
     neg_prompt = "bad anatomy, watermark, logo, anime, comic, drawing, bench, chair, stool, table,"
 
-    # scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
+    # enable_fast = True
+    # enable_dev = True
+    # enable_full = True
+    enable_fast = False
+    enable_dev = False
+    enable_full = True
+
+
     scheduler = FlashFlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
         
     tokenizer = CLIPTokenizer.from_pretrained(hidream_dir, subfolder="tokenizer")
@@ -205,12 +196,6 @@ def main():
             print("Before:", torch.cuda.memory_allocated())  # Memory in use
             print("Before (cached):", torch.cuda.memory_reserved())  # Cached memory
             del pipeline
-            # del text_encoder
-            # del text_encoder_2
-            # del text_encoder_3
-            # del tokenizer
-            # del tokenizer_2
-            # del tokenizer_3
             flush()
             print("After:", torch.cuda.memory_allocated())  # Memory in use
             print("After (cached):", torch.cuda.memory_reserved())  # Cached memory
@@ -238,17 +223,10 @@ def main():
             pos_pooled_prompt_embeds = pos_pooled_prompt_embeds.to(device)
             neg_t5_prompt_embeds = neg_t5_prompt_embeds.to(device)
             neg_pooled_prompt_embeds = neg_pooled_prompt_embeds.to(device)
-            def get_second_part_embedding(prompt):
-                llama3_prompt_embeds = pipeline._get_llama3_prompt_embeds(
-                    prompt = prompt,
-                    num_images_per_prompt = num_images_per_prompt,
-                    max_sequence_length = max_sequence_length,
-                    device = device,
-                    dtype = dtype
-                )
-                return llama3_prompt_embeds
-            pos_llama3_prompt_embeds = get_second_part_embedding(prompt)
-            neg_llama3_prompt_embeds = get_second_part_embedding(neg_prompt)
+            def get_second_part_embedding(pipeline, prompt):
+                return pipeline._get_llama3_prompt_embeds(prompt,num_images_per_prompt)
+            pos_llama3_prompt_embeds = get_second_part_embedding(pipeline, prompt)
+            neg_llama3_prompt_embeds = get_second_part_embedding(pipeline, neg_prompt)
             prompt_embeds = [pos_t5_prompt_embeds, pos_llama3_prompt_embeds]
             negative_prompt_embeds = [neg_t5_prompt_embeds, neg_llama3_prompt_embeds]
             pooled_prompt_embeds = pos_pooled_prompt_embeds
@@ -271,52 +249,143 @@ def main():
     
     generator = torch.Generator("cuda").manual_seed(seed)
 
-    transformer = HiDreamImageTransformer2DModel.from_pretrained(
-        hidream_dir, 
-        subfolder="transformer", 
-        torch_dtype=torch.bfloat16).to("cuda")
+    if enable_fast:
+        # 第一阶段：加载text_encoder 和 tokenizer处理prompt
+        pipeline = HiDreamImagePipeline.from_pretrained(
+            hidream_dir,
+            scheduler=scheduler,
+            text_encoder=None,
+            text_encoder_2=None,
+            text_encoder_3=None,
+            text_encoder_4=None,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            tokenizer_3=tokenizer_3,
+            tokenizer_4=tokenizer_4,
+            transformer=None
+        ).to("cuda",dtype=torch.bfloat16)
+        
+        save_suffix = "fast"
+        transformer = HiDreamImageTransformer2DModel.from_pretrained(
+            hidream_dir, 
+            subfolder="transformer", 
+            torch_dtype=torch.bfloat16).to("cuda")
+        # quantize(transformer, weights=qfloat8) # 对模型进行量化
+        # freeze(transformer)
+        transformer.enable_block_swap(block_swap, device)
+        pipeline.transformer = transformer
+        image = pipeline(
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            height=height,
+            width=width,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            num_images_per_prompt=1,
+            generator=generator,
+            device=device
+        ).images[0]
+        image.save(f"{save_image_name}_{save_suffix}.png")
+        
+        print("Before:", torch.cuda.memory_allocated())  # Memory in use
+        print("Before (cached):", torch.cuda.memory_reserved())  # Cached memory
+        del transformer, image, pipeline
+        flush()
+        print("After:", torch.cuda.memory_allocated())  # Memory in use
+        print("After (cached):", torch.cuda.memory_reserved())  # Cached memory
 
-    quantize(transformer, weights=qfloat8) # 对模型进行量化
-    freeze(transformer)
-    
-    transformer.enable_block_swap(25, device)
-    
 
-    # 第一阶段：加载text_encoder 和 tokenizer处理prompt
-    pipeline = HiDreamImagePipeline.from_pretrained(
-        hidream_dir,
-        scheduler=scheduler,
-        text_encoder=None,
-        text_encoder_2=None,
-        text_encoder_3=None,
-        text_encoder_4=None,
-        tokenizer=tokenizer,
-        tokenizer_2=tokenizer_2,
-        tokenizer_3=tokenizer_3,
-        tokenizer_4=tokenizer_4,
-        transformer=None
-    ).to("cuda",dtype=torch.bfloat16)
-    
-    pipeline.transformer = transformer
-    # pipeline.enable_model_cpu_offload()
+    if enable_dev:
+        hidream_dir = "F:/HiDream-I1/hidream_models/dev_nf4"
+        # 第一阶段：加载text_encoder 和 tokenizer处理prompt
+        pipeline = HiDreamImagePipeline.from_pretrained(
+            hidream_dir,
+            scheduler=scheduler,
+            text_encoder=None,
+            text_encoder_2=None,
+            text_encoder_3=None,
+            text_encoder_4=None,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            tokenizer_3=tokenizer_3,
+            tokenizer_4=tokenizer_4,
+            transformer=None
+        ).to("cuda",dtype=torch.bfloat16)
+        num_inference_steps = 28
+        save_suffix = "dev"
+        transformer = HiDreamImageTransformer2DModel.from_pretrained(
+            hidream_dir, 
+            subfolder="transformer", 
+            torch_dtype=torch.bfloat16).to("cuda")
+        # quantize(transformer, weights=qfloat8) # 对模型进行量化
+        # freeze(transformer)
+        transformer.enable_block_swap(block_swap, device)
+        pipeline.transformer = transformer
+        image = pipeline(
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            height=height,
+            width=width,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            num_images_per_prompt=1,
+            generator=generator,
+            device=device
+        ).images[0]
+        image.save(f"{save_image_name}_{save_suffix}.png")
+        print("Before:", torch.cuda.memory_allocated())  # Memory in use
+        print("Before (cached):", torch.cuda.memory_reserved())  # Cached memory
+        del transformer, image, pipeline
+        flush()
+        print("After:", torch.cuda.memory_allocated())  # Memory in use
+        print("After (cached):", torch.cuda.memory_reserved())  # Cached memory
 
-    # guidance_scale = 0
-    
-    image = pipeline(
-        prompt_embeds=prompt_embeds,
-        negative_prompt_embeds=negative_prompt_embeds,
-        pooled_prompt_embeds=pooled_prompt_embeds,
-        negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
-        height=height,
-        width=width,
-        guidance_scale=guidance_scale,
-        num_inference_steps=num_inference_steps,
-        num_images_per_prompt=1,
-        generator=generator,
-        device=device
-    ).images[0]
-    image.save(f"{save_image_name}.png")
-
+    if enable_full:
+        hidream_dir = "F:/HiDream-I1/hidream_models/full_nf4"
+        scheduler = FlowUniPCMultistepScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
+        # 第一阶段：加载text_encoder 和 tokenizer处理prompt
+        pipeline = HiDreamImagePipeline.from_pretrained(
+            hidream_dir,
+            scheduler=scheduler,
+            text_encoder=None,
+            text_encoder_2=None,
+            text_encoder_3=None,
+            text_encoder_4=None,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            tokenizer_3=tokenizer_3,
+            tokenizer_4=tokenizer_4,
+            transformer=None
+        ).to("cuda",dtype=torch.bfloat16)
+        guidance_scale = 6
+        num_inference_steps = 60
+        save_suffix = "full"
+        transformer = HiDreamImageTransformer2DModel.from_pretrained(
+            hidream_dir, 
+            subfolder="transformer", 
+            torch_dtype=torch.bfloat16).to("cuda")
+        # quantize(transformer, weights=qfloat8) # 对模型进行量化
+        # freeze(transformer)
+        transformer.enable_block_swap(block_swap, device)
+        pipeline.transformer = transformer
+        image = pipeline(
+            prompt_embeds=prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            height=height,
+            width=width,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            num_images_per_prompt=1,
+            generator=generator,
+            device=device
+        ).images[0]
+        image.save(f"{save_image_name}_{save_suffix}.png")
 
 if __name__ == "__main__":
     main()
